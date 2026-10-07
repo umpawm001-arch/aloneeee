@@ -1,7 +1,7 @@
-
 import asyncio
 import logging
 import time
+import re
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
@@ -69,10 +69,10 @@ TEXTS = {
         "about_contact": "📞 **Admin bilan bog'lanish:** @samir_admin",
         "shop_title": "🛍 **DO'KON** ⚡️",
         "shop_empty": "😔 Hozircha sotuvda lotlar mavjud emas.\nTez orada yangilari qo'shiladi! 🔥",
-        "shop_available": "🟢 Mavjud lotlar: **{count} ta**",
+        "shop_available": "📦 Jami lotlar: **{count} ta**",
         "shop_choose": "Kerakli lotni tanlang:",
         "lot_in_stock": "📦 Mavjud: **{stock} ta**",
-        "lot_sold_out_msg": "😔 **Bu lot to'liq sotildi!**\n\nAdmin tez orada yangi akkauntlar qo'shadi.",
+        "lot_sold_out_msg": "🔴 **Bu lot to'liq sotildi!**\n\nAdmin tez orada yangi akkauntlar qo'shadi.",
         "lot_buy_title": "🎉 **XARID MUVAFFAQIYATLI!** 👑",
         "lot_buy_name": "🏷 Lot:",
         "lot_buy_price": "💰 Narxi:",
@@ -98,6 +98,7 @@ TEXTS = {
         "promo_code_label": "🎁 Promokod:",
         "promo_bonus": "💰 Bonus:",
         "promo_new_balance": "💎 Yangi balansingiz:",
+        "promo_sent_to_admin": "✅ **Promokod qabul qilindi!**\n\nAdmin tez orada sizga akkaunt ma'lumotlarini yuboradi.",
         "btn_to_profile": "👤 Profilga qaytish",
         "topup_title": "💳 **HISOBNI TO'LDIRISH** ⚡️",
         "topup_desc": "To'ldirmoqchi bo'lgan summani tanlang:",
@@ -189,10 +190,10 @@ TEXTS = {
         "about_contact": "📞 **Связь с админом:** @samir_admin",
         "shop_title": "🛍 **МАГАЗИН** ⚡️",
         "shop_empty": "😔 Пока нет доступных лотов.\nСкоро добавятся новые! 🔥",
-        "shop_available": "🟢 Доступные лоты: **{count} шт**",
+        "shop_available": "📦 Всего лотов: **{count} шт**",
         "shop_choose": "Выберите нужный лот:",
         "lot_in_stock": "📦 В наличии: **{stock} шт**",
-        "lot_sold_out_msg": "😔 **Этот лот полностью продан!**\n\nАдмин скоро добавит новые аккаунты.",
+        "lot_sold_out_msg": "🔴 **Этот лот полностью продан!**\n\nАдмин скоро добавит новые аккаунты.",
         "lot_buy_title": "🎉 **ПОКУПКА УСПЕШНА!** 👑",
         "lot_buy_name": "🏷 Лот:",
         "lot_buy_price": "💰 Цена:",
@@ -218,6 +219,7 @@ TEXTS = {
         "promo_code_label": "🎁 Промокод:",
         "promo_bonus": "💰 Бонус:",
         "promo_new_balance": "💎 Ваш новый баланс:",
+        "promo_sent_to_admin": "✅ **Промокод принят!**\n\nАдмин скоро отправит вам данные аккаунта.",
         "btn_to_profile": "👤 Вернуться в профиль",
         "topup_title": "💳 **ПОПОЛНЕНИЕ БАЛАНСА** ⚡️",
         "topup_desc": "Выберите сумму пополнения:",
@@ -309,10 +311,10 @@ TEXTS = {
         "about_contact": "📞 **Contact Admin:** @samir_admin",
         "shop_title": "🛍 **SHOP** ⚡️",
         "shop_empty": "😔 No lots available yet.\nNew ones coming soon! 🔥",
-        "shop_available": "🟢 Available lots: **{count}**",
+        "shop_available": "📦 Total lots: **{count}**",
         "shop_choose": "Choose the lot:",
         "lot_in_stock": "📦 In stock: **{stock}**",
-        "lot_sold_out_msg": "😔 **This lot is fully sold out!**\n\nAdmin will add new accounts soon.",
+        "lot_sold_out_msg": "🔴 **This lot is fully sold out!**\n\nAdmin will add new accounts soon.",
         "lot_buy_title": "🎉 **PURCHASE SUCCESSFUL!** 👑",
         "lot_buy_name": "🏷 Lot:",
         "lot_buy_price": "💰 Price:",
@@ -338,6 +340,7 @@ TEXTS = {
         "promo_code_label": "🎁 Promo:",
         "promo_bonus": "💰 Bonus:",
         "promo_new_balance": "💎 Your new balance:",
+        "promo_sent_to_admin": "✅ **Promo accepted!**\n\nAdmin will send you account credentials soon.",
         "btn_to_profile": "👤 Back to Profile",
         "topup_title": "💳 **TOP UP BALANCE** ⚡️",
         "topup_desc": "Choose top-up amount:",
@@ -412,6 +415,8 @@ class AdminStates(StatesGroup):
     adding_lot_price = State()
     adding_lot_desc = State()
     adding_credentials_to_lot = State()
+    editing_lot_field = State()
+    editing_lot_value = State()
     waiting_for_promo_code = State()
     waiting_for_promo_amount = State()
     waiting_for_promo_limit = State()
@@ -477,11 +482,35 @@ def format_money(amount):
     return f"{amount:,}".replace(",", " ")
 
 
+def parse_amount(text):
+    """
+    Summani parse qilish:
+    10.000 -> 10000
+    10 000 -> 10000
+    -10.000 -> -10000
+    +10.000 -> 10000
+    """
+    cleaned = text.replace(".", "").replace(" ", "").replace(",", "")
+    if cleaned.startswith("-"):
+        num = cleaned[1:]
+        if num.isdigit():
+            return -int(num)
+    elif cleaned.startswith("+"):
+        num = cleaned[1:]
+        if num.isdigit():
+            return int(num)
+    elif cleaned.isdigit():
+        return int(cleaned)
+    return None
+
+
 def get_lot_stock(lot):
+    """Lotdagi sotilmagan credentiallar soni"""
     return sum(1 for c in lot["credentials"] if not c["sold"])
 
 
 def get_available_credential(lot):
+    """Birinchi mavjud credential ni olish"""
     for c in lot["credentials"]:
         if not c["sold"]:
             return c
@@ -538,7 +567,6 @@ async def cmd_start(message: Message, state: FSMContext):
             "lang": "uz",
         }
 
-    # Eski reply keyboard ni o'chirish
     remove_msg = await message.answer("⏳", reply_markup=ReplyKeyboardRemove())
     try:
         await remove_msg.delete()
@@ -643,9 +671,9 @@ async def about_bot(callback: CallbackQuery):
 @router.callback_query(F.data == "shop_list")
 async def shop_list(callback: CallbackQuery):
     user_id = callback.from_user.id
-    available_lots = [(lid, lot) for lid, lot in database["lots"].items() if get_lot_stock(lot) > 0]
+    all_lots = list(database["lots"].items())
 
-    if not available_lots:
+    if not all_lots:
         await safe_edit(
             callback.message,
             f"{t(user_id, 'shop_title')}\n\n{t(user_id, 'shop_empty')}",
@@ -655,19 +683,25 @@ async def shop_list(callback: CallbackQuery):
         return
 
     kb = []
-    for lid, lot in available_lots:
+    for lid, lot in all_lots:
         stock = get_lot_stock(lot)
-        kb.append([InlineKeyboardButton(
-            text=f"🎮 {lot['name']} — {format_money(int(lot['price']))} so'm ({stock} ta)",
-            callback_data=f"view_lot_{lid}"
-        )])
+        if stock > 0:
+            kb.append([InlineKeyboardButton(
+                text=f"🎮 {lot['name']} — {format_money(int(lot['price']))} so'm | 📦 {stock} ta",
+                callback_data=f"view_lot_{lid}"
+            )])
+        else:
+            kb.append([InlineKeyboardButton(
+                text=f"🔴 {lot['name']} — SOTILDI (0 ta)",
+                callback_data=f"view_lot_{lid}"
+            )])
     kb.append([InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="back_to_main")])
 
     await safe_edit(
         callback.message,
         f"{t(user_id, 'shop_title')}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{t(user_id, 'shop_available', count=len(available_lots))}\n\n"
+        f"{t(user_id, 'shop_available', count=len(all_lots))}\n\n"
         f"{t(user_id, 'shop_choose')}",
         kb
     )
@@ -685,27 +719,27 @@ async def view_lot(callback: CallbackQuery):
         return
 
     stock = get_lot_stock(lot)
-    if stock <= 0:
-        await safe_edit(
-            callback.message,
-            f"{t(user_id, 'shop_title')}\n\n{t(user_id, 'lot_sold_out_msg')}",
-            back_button(user_id, "shop_list")
-        )
-        await callback.answer()
-        return
 
     text = (
         f"🎮 **{lot['name']}**\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🎯 O'yin: **{lot.get('game', '—')}**\n"
         f"💰 Narxi: **{format_money(int(lot['price']))} so'm**\n"
-        f"{t(user_id, 'lot_in_stock', stock=stock)}\n"
+        f"📦 Qolgan: **{stock} ta**\n"
         f"📝 {lot.get('desc', '—')}"
     )
-    kb = [
-        [InlineKeyboardButton(text="💳 Sotib olish", callback_data=f"buy_lot_{lid}")],
-        [InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]
-    ]
+
+    if stock > 0:
+        kb = [
+            [InlineKeyboardButton(text="💳 Sotib olish", callback_data=f"buy_lot_{lid}")],
+            [InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]
+        ]
+    else:
+        text += "\n\n🔴 **BU LOT TO'LIQ SOTILDI!**"
+        kb = [
+            [InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]
+        ]
+
     await safe_edit(callback.message, text, kb)
     await callback.answer()
 
@@ -853,7 +887,7 @@ async def enter_promo_handler(callback: CallbackQuery, state: FSMContext):
 @router.message(UserStates.waiting_for_activate_promo)
 async def activate_promo_process(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    code = message.text.strip().upper()
+    code = message.text.strip()
     await state.clear()
 
     if user_id not in database["users"]:
@@ -865,7 +899,16 @@ async def activate_promo_process(message: Message, state: FSMContext):
             "total_spent": 0, "lang": "uz",
         }
 
-    if code not in database["promos"]:
+    code_upper = code.upper()
+    promo_found = None
+    promo_code_found = None
+    for pc, pdata in database["promos"].items():
+        if pc.upper() == code_upper:
+            promo_found = pdata
+            promo_code_found = pc
+            break
+
+    if not promo_found:
         await message.answer(
             t(user_id, "promo_not_found"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -874,7 +917,7 @@ async def activate_promo_process(message: Message, state: FSMContext):
         )
         return
 
-    promo = database["promos"][code]
+    promo = promo_found
     promo_amount = promo["amount"]
     promo_limit = promo.get("limit", 0)
     promo_used = promo.get("used_count", 0)
@@ -890,7 +933,7 @@ async def activate_promo_process(message: Message, state: FSMContext):
 
     user = database["users"][user_id]
 
-    if code in user["used_promos"]:
+    if promo_code_found in user["used_promos"]:
         await message.answer(
             t(user_id, "promo_used"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -900,19 +943,34 @@ async def activate_promo_process(message: Message, state: FSMContext):
         return
 
     user["balance"] += promo_amount
-    user["used_promos"].append(code)
-    database["promos"][code]["used_count"] = promo_used + 1
+    user["used_promos"].append(promo_code_found)
+    database["promos"][promo_code_found]["used_count"] = promo_used + 1
 
     await message.answer(
         f"{t(user_id, 'promo_activated')}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{t(user_id, 'promo_code_label')} `{code}`\n"
+        f"{t(user_id, 'promo_code_label')} `{promo_code_found}`\n"
         f"{t(user_id, 'promo_bonus')} **{format_money(promo_amount)} so'm**\n\n"
-        f"{t(user_id, 'promo_new_balance')} **{format_money(user['balance'])} so'm**",
+        f"{t(user_id, 'promo_new_balance')} **{format_money(user['balance'])} so'm**\n\n"
+        f"{t(user_id, 'promo_sent_to_admin')}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")
         ]])
     )
+
+    admin_text = (
+        f"🎁 **PROMOKOD FAOLLASHTIRILDI!** 🔔\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Xaridor: **{message.from_user.full_name}**\n"
+        f"🔗 @{message.from_user.username}\n"
+        f"🆔 ID: `{user_id}`\n"
+        f"🔖 KODI: `/{user['klent_code']}`\n\n"
+        f"🎁 Promokod: `{promo_code_found}`\n"
+        f"💰 Summa: **{format_money(promo_amount)} so'm**\n\n"
+        f"⚠️ Ushbu mijozga akkaunt yuboring:\n"
+        f"`/{user['klent_code']} email:parol`"
+    )
+    await message.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode="Markdown")
 
 
 # ==================== BALANS TO'LDIRISH ====================
@@ -973,11 +1031,11 @@ async def process_amount_selection(callback: CallbackQuery, state: FSMContext):
 @router.message(BuyStates.waiting_for_custom_amount)
 async def process_custom_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    if not message.text.isdigit():
+    amount = parse_amount(message.text)
+    if amount is None or amount <= 0:
         await message.answer(t(user_id, "only_number"))
         return
 
-    amount = int(message.text)
     if amount < MIN_TOPUP:
         await message.answer(t(user_id, "min_sum"))
         return
@@ -1172,7 +1230,7 @@ async def show_admin_dashboard(message_or_callback, is_callback=False):
     kb = [
         [InlineKeyboardButton(text="📊 To'liq statistika", callback_data="admin_full_stats")],
         [InlineKeyboardButton(text="📦 LOTLAR (Kanal)", callback_data="admin_lots_menu")],
-        [InlineKeyboardButton(text="🎁 Promokod yaratish", callback_data="admin_create_promo")],
+        [InlineKeyboardButton(text="🎁 Promokodlar", callback_data="admin_promos_menu")],
         [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin_users_list")],
         [InlineKeyboardButton(text="📢 Rassilka", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="⬅️ Bosh menyu", callback_data="back_to_main")],
@@ -1315,10 +1373,11 @@ async def admin_get_lot_game(message: Message, state: FSMContext):
 
 @router.message(AdminStates.adding_lot_price)
 async def admin_get_lot_price(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("❌ Faqat raqam!")
+    amount = parse_amount(message.text)
+    if amount is None or amount <= 0:
+        await message.answer("❌ Faqat musbat raqam!")
         return
-    await state.update_data(lot_price=message.text)
+    await state.update_data(lot_price=str(amount))
     await message.answer("4️⃣ Tavsif kiriting (yoki `-` yozing):")
     await state.set_state(AdminStates.adding_lot_desc)
 
@@ -1382,7 +1441,7 @@ async def add_creds_start(callback: CallbackQuery, state: FSMContext):
         f"`user2@gmail.com:parol456`\n"
         f"`user3@gmail.com:parol789`\n\n"
         f"💡 Birdaniga ko'p qator yuborishingiz mumkin!",
-        cancel_button(ADMIN_ID, "admin_lots_menu")
+        cancel_button(ADMIN_ID, f"view_lot_admin_{lot_id}")
     )
     await state.set_state(AdminStates.adding_credentials_to_lot)
     await callback.answer()
@@ -1475,7 +1534,7 @@ async def admin_manage_lots(callback: CallbackQuery):
         total = len(lot["credentials"])
         status = "🟢" if stock > 0 else "🔴"
         kb.append([InlineKeyboardButton(
-            text=f"{status} #{lid} {lot['name']} ({stock}/{total})",
+            text=f"{status} #{lid} {lot['name']} — 📦 {stock}/{total}",
             callback_data=f"view_lot_admin_{lid}"
         )])
     kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_lots_menu")])
@@ -1522,6 +1581,7 @@ async def view_lot_admin(callback: CallbackQuery):
         text += "\n\n🔴 **LOT TO'LIQ SOTILDI!**"
 
     kb = [
+        [InlineKeyboardButton(text="✏️ Tahrirlash", callback_data=f"edit_lot_{lid}")],
         [InlineKeyboardButton(text="➕ Credential qo'shish", callback_data=f"add_creds_{lid}")],
         [InlineKeyboardButton(text="👁 Mavjud credentiallar", callback_data=f"show_creds_{lid}")],
         [InlineKeyboardButton(text="🗑 Lotni o'chirish", callback_data=f"delete_lot_{lid}")],
@@ -1553,9 +1613,121 @@ async def show_creds(callback: CallbackQuery):
     if len(available) > 50:
         text += f"\n*... va yana {len(available) - 50} ta*"
 
-    kb = [[InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")]]
+    kb = [
+        [InlineKeyboardButton(text="🗑 Barchasini o'chirish", callback_data=f"clear_creds_{lid}")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")],
+    ]
     await safe_edit(callback.message, text, kb)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clear_creds_"))
+async def clear_creds(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    lid = int(callback.data.split("_")[2])
+    lot = database["lots"].get(lid)
+    if not lot:
+        await callback.answer("⚠️ Lot topilmadi!", show_alert=True)
+        return
+
+    before = len(lot["credentials"])
+    lot["credentials"] = [c for c in lot["credentials"] if c["sold"]]
+    after = len(lot["credentials"])
+    removed = before - after
+
+    await callback.answer(f"✅ {removed} ta sotilmagan credential o'chirildi!", show_alert=True)
+    await view_lot_admin(callback)
+
+
+# ==================== ✏️ LOTNI TAHRIRLASH ====================
+@router.callback_query(F.data.startswith("edit_lot_"))
+async def edit_lot_menu(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    lid = int(callback.data.split("_")[2])
+    lot = database["lots"].get(lid)
+    if not lot:
+        await callback.answer("⚠️ Lot topilmadi!", show_alert=True)
+        return
+
+    text = (
+        f"✏️ **{lot['name']} — TAHRIRLASH**\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Qaysi maydonni o'zgartirmoqchisiz?"
+    )
+    kb = [
+        [InlineKeyboardButton(text=f"🏷 Nomi: {lot['name']}", callback_data=f"edit_field_{lid}_name")],
+        [InlineKeyboardButton(text=f"🎮 O'yin: {lot.get('game', '—')}", callback_data=f"edit_field_{lid}_game")],
+        [InlineKeyboardButton(text=f"💰 Narxi: {format_money(int(lot['price']))} so'm", callback_data=f"edit_field_{lid}_price")],
+        [InlineKeyboardButton(text=f"📝 Tavsif: {lot.get('desc', '—')[:30]}", callback_data=f"edit_field_{lid}_desc")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")],
+    ]
+    await safe_edit(callback.message, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_field_"))
+async def edit_lot_field(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    parts = callback.data.split("_")
+    lid = int(parts[2])
+    field = parts[3]
+    lot = database["lots"].get(lid)
+    if not lot:
+        await callback.answer("⚠️ Lot topilmadi!", show_alert=True)
+        return
+
+    field_names = {
+        "name": "yangi nomini",
+        "game": "yangi o'yin nomini",
+        "price": "yangi narxini (raqamda)",
+        "desc": "yangi tavsifini",
+    }
+    await state.update_data(edit_lot_id=lid, edit_field=field)
+    await safe_edit(
+        callback.message,
+        f"✏️ **{lot['name']}** — {field_names.get(field, field)} kiriting:",
+        cancel_button(ADMIN_ID, f"view_lot_admin_{lid}")
+    )
+    await state.set_state(AdminStates.editing_lot_value)
+    await callback.answer()
+
+
+@router.message(AdminStates.editing_lot_value)
+async def edit_lot_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    lid = data["edit_lot_id"]
+    field = data["edit_field"]
+    lot = database["lots"].get(lid)
+    if not lot:
+        await state.clear()
+        await message.answer("⚠️ Lot topilmadi!")
+        return
+
+    new_value = message.text.strip()
+
+    if field == "price":
+        amount = parse_amount(new_value)
+        if amount is None or amount <= 0:
+            await message.answer("❌ Faqat musbat raqam!")
+            return
+        lot["price"] = str(amount)
+    elif field == "name":
+        lot["name"] = new_value
+    elif field == "game":
+        lot["game"] = new_value
+    elif field == "desc":
+        lot["desc"] = new_value if new_value != "-" else "—"
+
+    await state.clear()
+    kb = [[InlineKeyboardButton(text="⬅️ Lotga qaytish", callback_data=f"view_lot_admin_{lid}")]]
+    await message.answer(
+        f"✅ **{field}** muvaffaqiyatli o'zgartirildi!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        parse_mode="Markdown"
+    )
 
 
 @router.callback_query(F.data.startswith("delete_lot_"))
@@ -1571,31 +1743,70 @@ async def delete_lot(callback: CallbackQuery):
     await admin_manage_lots(callback)
 
 
-# ==================== PROMOKOD YARATISH ====================
-@router.callback_query(F.data == "admin_create_promo")
-async def admin_create_promo(callback: CallbackQuery, state: FSMContext):
+# ==================== 🎁 PROMOKODLAR MENYU (ADMIN) ====================
+@router.callback_query(F.data == "admin_promos_menu")
+async def admin_promos_menu(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
-    await safe_edit(callback.message, "🎁 **PROMOKOD YARATISH**\n\nKodni kiriting:", cancel_button(ADMIN_ID, "admin_panel_back"))
+
+    text = (
+        f"🎁 **PROMOKODLAR MENYU**\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Bu bo'limda promokodlar yaratasiz.\n"
+        f"Foydalanuvchi promokodni kiritganda sizga xabar keladi.\n\n"
+        f"📊 Jami promokodlar: **{len(database['promos'])} ta**"
+    )
+
+    if database["promos"]:
+        text += "\n\n📋 **Mavjud promokodlar:**\n"
+        for code, p in database["promos"].items():
+            used = p.get("used_count", 0)
+            limit = p.get("limit", 0)
+            limit_text = "∞" if limit == 0 else str(limit)
+            text += f"• `{code}` — {format_money(p['amount'])} so'm ({used}/{limit_text})\n"
+
+    kb = [
+        [InlineKeyboardButton(text="➕ Yangi promokod", callback_data="admin_add_promo")],
+        [InlineKeyboardButton(text="🗑 Promokod o'chirish", callback_data="admin_delete_promo_menu")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+    ]
+    await safe_edit(callback.message, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_add_promo")
+async def admin_add_promo(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await safe_edit(
+        callback.message,
+        "🎁 **YANGI PROMOKOD**\n\n"
+        "1️⃣ Promokod nomini kiriting (masalan: `alone`):",
+        cancel_button(ADMIN_ID, "admin_promos_menu")
+    )
     await state.set_state(AdminStates.waiting_for_promo_code)
     await callback.answer()
 
 
 @router.message(AdminStates.waiting_for_promo_code)
 async def admin_get_promo_code(message: Message, state: FSMContext):
-    promo_code = message.text.strip().upper()
+    promo_code = message.text.strip()
+    if promo_code in database["promos"]:
+        await message.answer("⚠️ Bu promokod allaqachon mavjud! Boshqa nom kiriting:")
+        return
     await state.update_data(promo_code=promo_code)
-    await message.answer("💰 Qiymatini kiriting (so'mda):")
+    await message.answer("2️⃣ Promokod qiymatini kiriting (so'mda, masalan: `10000`):")
     await state.set_state(AdminStates.waiting_for_promo_amount)
 
 
 @router.message(AdminStates.waiting_for_promo_amount)
 async def admin_get_promo_amount(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("❌ Faqat raqam!")
+    amount = parse_amount(message.text)
+    if amount is None or amount <= 0:
+        await message.answer("❌ Faqat musbat raqam!")
         return
-    await state.update_data(promo_amount=int(message.text))
-    await message.answer("🔢 Limit (0 = cheksiz):")
+    await state.update_data(promo_amount=amount)
+    await message.answer("3️⃣ Limit (necha kishi ishlatishi mumkin, 0 = cheksiz):")
     await state.set_state(AdminStates.waiting_for_promo_limit)
 
 
@@ -1617,24 +1828,64 @@ async def admin_get_promo_limit(message: Message, state: FSMContext):
     }
 
     await state.clear()
-    kb = [[InlineKeyboardButton(text="⚙️ Admin Panel", callback_data="admin_panel_back")]]
+    kb = [[InlineKeyboardButton(text="⚙️ Promokodlar menyu", callback_data="admin_promos_menu")]]
     limit_text = "cheksiz" if limit == 0 else f"{limit} ta"
     await message.answer(
         f"✅ **PROMOKOD YARATILDI!**\n\n"
         f"🎁 Kod: `{promo_code}`\n"
         f"💰 Qiymat: **{format_money(amount)} so'm**\n"
-        f"🔢 Limit: **{limit_text}**",
+        f"🔢 Limit: **{limit_text}**\n\n"
+        f"💡 Foydalanuvchi bu promokodni kiritsa, sizga avtomatik xabar keladi.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         parse_mode="Markdown",
     )
 
 
-# ==================== RASILKA ====================
+@router.callback_query(F.data == "admin_delete_promo_menu")
+async def admin_delete_promo_menu(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    if not database["promos"]:
+        await safe_edit(callback.message, "⚠️ Promokodlar yo'q.", back_button(ADMIN_ID, "admin_promos_menu"))
+        await callback.answer()
+        return
+
+    kb = []
+    for code in database["promos"].keys():
+        kb.append([InlineKeyboardButton(text=f"🗑 {code}", callback_data=f"delete_promo_{code}")])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_promos_menu")])
+
+    await safe_edit(callback.message, "🗑 **Qaysi promokodni o'chirish?**", kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_promo_"))
+async def admin_delete_promo(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    code = callback.data.replace("delete_promo_", "")
+    if code in database["promos"]:
+        del database["promos"][code]
+        await callback.answer(f"✅ {code} o'chirildi!", show_alert=True)
+    else:
+        await callback.answer("⚠️ Topilmadi!", show_alert=True)
+    await admin_delete_promo_menu(callback)
+
+
+# ==================== 📢 RASILKA ====================
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
         return
-    await safe_edit(callback.message, "📢 **RASSILKA**\n\nXabar yuboring:", cancel_button(ADMIN_ID, "admin_panel_back"))
+    await safe_edit(
+        callback.message,
+        "📢 **RASSILKA**\n\n"
+        "Barcha foydalanuvchilarga yubormoqchi bo'lgan xabaringizni kiriting:\n\n"
+        "📌 *Matn, rasm yoki video yuborishingiz mumkin*\n"
+        "📌 *Misol: randomlar sotuvda*",
+        cancel_button(ADMIN_ID, "admin_panel_back")
+    )
     await state.set_state(AdminStates.waiting_for_broadcast)
     await callback.answer()
 
@@ -1644,7 +1895,9 @@ async def admin_broadcast_send(message: Message, state: FSMContext):
     await state.clear()
     count = 0
     failed = 0
-    for user_id in database["users"].keys():
+    user_ids = list(database["users"].keys())
+
+    for user_id in user_ids:
         try:
             await message.send_copy(chat_id=user_id)
             count += 1
@@ -1654,13 +1907,15 @@ async def admin_broadcast_send(message: Message, state: FSMContext):
 
     kb = [[InlineKeyboardButton(text="⚙️ Admin Panel", callback_data="admin_panel_back")]]
     await message.answer(
-        f"✅ **RASSILKA TUGADI!**\n\n✔️ Yuborildi: **{count}**\n❌ Xato: **{failed}**",
+        f"✅ **RASSILKA TUGADI!**\n\n"
+        f"✔️ Yuborildi: **{count}**\n"
+        f"❌ Xato: **{failed}**",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         parse_mode="Markdown",
     )
 
 
-# ==================== /klent VA /user ====================
+# ==================== /klent BUYRUQLARI ====================
 @router.message(F.text.startswith("/klent"))
 async def admin_manage_klent(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -1668,7 +1923,14 @@ async def admin_manage_klent(message: Message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("⚠ Format:\n`/klent1 Salom`\n`/klent1 +40000`", parse_mode="Markdown")
+        await message.reply(
+            "⚠ **Format:**\n"
+            "• Balans qo'shish: `/klent1 +10.000`\n"
+            "• Balans ayirish: `/klent1 -10.000`\n"
+            "• Xabar yuborish: `/klent1 Salom`\n"
+            "• Akkaunt yuborish: `/klent1 email:parol`",
+            parse_mode="Markdown"
+        )
         return
 
     klent_code_input = parts[0][1:]
@@ -1686,32 +1948,50 @@ async def admin_manage_klent(message: Message):
         await message.reply(f"❌ Topilmadi: `/{klent_code_input}`", parse_mode="Markdown")
         return
 
-    cleaned_body = command_body.replace(" ", "")
-    if cleaned_body.startswith("+") or cleaned_body.startswith("-") or cleaned_body.isdigit():
-        try:
-            amount = int(cleaned_body)
-            target_user_data["balance"] += amount
-            new_balance = target_user_data["balance"]
+    # ✅ BALANS O'ZGARTIRISH: +10.000 yoki -10.000
+    if command_body.startswith("+") or command_body.startswith("-"):
+        amount = parse_amount(command_body)
+        if amount is None or amount == 0:
+            await message.reply("❌ Summani to'g'ri kiriting! Masalan: `/klent1 +10.000`", parse_mode="Markdown")
+            return
 
-            await message.reply(
-                f"✅ `/{klent_code_input}` balansi: **{amount:+,} so'm**\n"
-                f"💰 Yangi: **{format_money(new_balance)} so'm**",
+        target_user_data["balance"] += amount
+        new_balance = target_user_data["balance"]
+
+        await message.reply(
+            f"✅ `/{klent_code_input}` balansi o'zgardi: **{amount:+,} so'm**\n"
+            f"💰 Yangi balans: **{format_money(new_balance)} so'm**",
+            parse_mode="Markdown"
+        )
+        try:
+            await message.bot.send_message(
+                chat_id=target_user_id,
+                text=f"{t(target_user_id, 'balance_changed')}\n\n"
+                     f"{t(target_user_id, 'balance_change')} **{amount:+,} so'm**\n"
+                     f"{t(target_user_id, 'balance_current')} **{format_money(new_balance)} so'm**",
                 parse_mode="Markdown"
             )
-            try:
-                await message.bot.send_message(
-                    chat_id=target_user_id,
-                    text=f"{t(target_user_id, 'balance_changed')}\n\n"
-                         f"{t(target_user_id, 'balance_change')} **{amount:+,} so'm**\n"
-                         f"{t(target_user_id, 'balance_current')} **{format_money(new_balance)} so'm**",
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-            return
-        except ValueError:
+        except Exception:
             pass
+        return
 
+    # ✅ AKKAUNT YUBORISH: email:parol
+    if ":" in command_body:
+        try:
+            await message.bot.send_message(
+                chat_id=target_user_id,
+                text=f"🎁 **SIZNING AKKOUNTINGIZ!** 🔑\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                     f"📧 `{command_body}`\n\n"
+                     f"⚠️ *Bu ma'lumotlarni hech kimga bermang!*",
+                parse_mode="Markdown"
+            )
+            await message.reply(f"✅ Akkaunt `/{klent_code_input}` ga yuborildi!")
+        except Exception as e:
+            await message.reply(f"❌ Xatolik: {e}")
+        return
+
+    # ✅ ODDIY XABAR
     try:
         await message.bot.send_message(
             chat_id=target_user_id,
@@ -1730,7 +2010,7 @@ async def admin_manage_user_id(message: Message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        await message.reply("⚠ Format: `/user 123456789 +40000`", parse_mode="Markdown")
+        await message.reply("⚠ Format: `/user 123456789 +10.000`", parse_mode="Markdown")
         return
 
     if not parts[1].isdigit():
@@ -1745,33 +2025,51 @@ async def admin_manage_user_id(message: Message):
         return
 
     target_user_data = database["users"][target_user_id]
-    cleaned_body = command_body.replace(" ", "")
 
-    if cleaned_body.startswith("+") or cleaned_body.startswith("-") or cleaned_body.isdigit():
+    # ✅ BALANS O'ZGARTIRISH
+    if command_body.startswith("+") or command_body.startswith("-"):
+        amount = parse_amount(command_body)
+        if amount is None or amount == 0:
+            await message.reply("❌ Summani to'g'ri kiriting!")
+            return
+
+        target_user_data["balance"] += amount
+        new_balance = target_user_data["balance"]
+
+        await message.reply(
+            f"✅ ID `{target_user_id}` balansi: **{amount:+,} so'm**\n"
+            f"💰 Yangi: **{format_money(new_balance)} so'm**",
+            parse_mode="Markdown"
+        )
         try:
-            amount = int(cleaned_body)
-            target_user_data["balance"] += amount
-            new_balance = target_user_data["balance"]
-
-            await message.reply(
-                f"✅ ID `{target_user_id}` balansi: **{amount:+,} so'm**\n"
-                f"💰 Yangi: **{format_money(new_balance)} so'm**",
+            await message.bot.send_message(
+                chat_id=target_user_id,
+                text=f"{t(target_user_id, 'balance_changed')}\n\n"
+                     f"{t(target_user_id, 'balance_change')} **{amount:+,} so'm**\n"
+                     f"{t(target_user_id, 'balance_current')} **{format_money(new_balance)} so'm**",
                 parse_mode="Markdown"
             )
-            try:
-                await message.bot.send_message(
-                    chat_id=target_user_id,
-                    text=f"{t(target_user_id, 'balance_changed')}\n\n"
-                         f"{t(target_user_id, 'balance_change')} **{amount:+,} so'm**\n"
-                         f"{t(target_user_id, 'balance_current')} **{format_money(new_balance)} so'm**",
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-            return
-        except ValueError:
+        except Exception:
             pass
+        return
 
+    # ✅ AKKAUNT YUBORISH
+    if ":" in command_body:
+        try:
+            await message.bot.send_message(
+                chat_id=target_user_id,
+                text=f"🎁 **SIZNING AKKOUNTINGIZ!** 🔑\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                     f"📧 `{command_body}`\n\n"
+                     f"⚠️ *Bu ma'lumotlarni hech kimga bermang!*",
+                parse_mode="Markdown"
+            )
+            await message.reply(f"✅ Akkaunt `{target_user_id}` ga yuborildi!")
+        except Exception as e:
+            await message.reply(f"❌ Xatolik: {e}")
+        return
+
+    # ✅ ODDIY XABAR
     try:
         await message.bot.send_message(
             chat_id=target_user_id,
@@ -1828,7 +2126,7 @@ async def main():
     print("║   ✅ Ishga tushdi!                ║")
     print(f"║   👑 Admin: {ADMIN_ID}        ║")
     print("║   🌐 UZ / RU / EN                 ║")
-    print("║   📦 LOT (KANAL) TIZIMI           ║")
+    print("║   📦 LOT + 🎁 PROMO + 📢 RASILKA  ║")
     print("╚══════════════════════════════════╝")
 
     await bot.delete_webhook(drop_pending_updates=True)
