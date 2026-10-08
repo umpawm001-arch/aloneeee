@@ -20,7 +20,7 @@ from supabase import create_client, Client
 
 # === SOZLAMALAR ===
 TOKEN = os.getenv("TOKEN", "8692469958:AAH75IR4Wvo1fF4zxD1eH5P013KF72Y0cLY")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6650430442"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8223721716"))
 ADMIN_PASSWORD = "alone"
 CARD_NUMBER = "8600 1402 3999 1731"
 CARD_HOLDER = "N.m"
