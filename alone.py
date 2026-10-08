@@ -35,25 +35,26 @@ bot_start_time = time.time()
 
 supabase: Client = None
 
+
 # ==================== SUPABASE ====================
 def init_supabase():
     global supabase
     if SUPABASE_URL and SUPABASE_KEY:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print(f"✅ Supabase ulandi: {SUPABASE_URL}")
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print(f"✅ Supabase ulandi: {SUPABASE_URL}")
+        except Exception as e:
+            print(f"❌ Supabase xatolik: {e}")
+            supabase = None
     else:
-        print("⚠️ Supabase URL/KEY yo'q — xotirada ishlaydi")
+        print("⚠️ Supabase URL/KEY yo'q")
         supabase = None
 
 
-# ==================== BAZADAN YUKLASH ====================
 def load_database():
-    """Supabase'dan barcha ma'lumotlarni yuklash"""
     if not supabase:
         return
-
     try:
-        # Users
         res = supabase.table("users").select("*").execute()
         for u in res.data:
             database["users"][u["user_id"]] = {
@@ -65,7 +66,6 @@ def load_database():
                 "used_promos": u.get("used_promos") or [],
             }
 
-        # Lots
         res = supabase.table("lots").select("*").execute()
         for l in res.data:
             database["lots"][l["lot_id"]] = {
@@ -77,12 +77,11 @@ def load_database():
                 "credentials": [],
             }
 
-        # Credentials
         res = supabase.table("credentials").select("*").execute()
         for c in res.data:
-            lot_id = c.get("lot_id")
-            if lot_id in database["lots"]:
-                database["lots"][lot_id]["credentials"].append({
+            lid = c.get("lot_id")
+            if lid in database["lots"]:
+                database["lots"][lid]["credentials"].append({
                     "email": c.get("email", ""),
                     "password": c.get("password", ""),
                     "sold": c.get("sold", False),
@@ -90,7 +89,6 @@ def load_database():
                     "sold_at": c.get("sold_at"),
                 })
 
-        # Promos
         res = supabase.table("promos").select("*").execute()
         for p in res.data:
             database["promos"][p["code"]] = {
@@ -99,18 +97,16 @@ def load_database():
                 "used_count": p.get("used_count", 0),
             }
 
-        # Stats
         res = supabase.table("stats").select("*").execute()
         for s in res.data:
             if s["key"] in database:
                 database[s["key"]] = s["value"]
 
-        print(f"✅ Baza yuklandi: {len(database['users'])} user, {len(database['lots'])} lot")
+        print(f"✅ Baza: {len(database['users'])} user, {len(database['lots'])} lot")
     except Exception as e:
-        print(f"❌ Load xatolik: {e}")
+        print(f"❌ Load: {e}")
 
 
-# ==================== YANGILASH ====================
 def save_user(user_id):
     if not supabase or user_id not in database["users"]:
         return
@@ -142,7 +138,6 @@ def save_lot(lot_id):
             "desc_text": l.get("desc", "—"),
             "created_at": l.get("created_at", ""),
         }).execute()
-        # Credentials ni yangilash
         for c in l.get("credentials", []):
             supabase.table("credentials").upsert({
                 "lot_id": lot_id,
@@ -160,6 +155,7 @@ def delete_lot_db(lot_id):
     if not supabase:
         return
     try:
+        supabase.table("credentials").delete().eq("lot_id", lot_id).execute()
         supabase.table("lots").delete().eq("lot_id", lot_id).execute()
     except Exception as e:
         print(f"❌ delete_lot: {e}")
@@ -198,16 +194,12 @@ def save_stats(key, value):
         print(f"❌ save_stats: {e}")
 
 
-def save_lot_counter():
-    save_stats("lot_counter", database.get("lot_counter", 0))
-
-
 # ==================== TILLAR ====================
 TEXTS = {
     "uz": {
         "lang_name": "🇺🇿 O'zbekcha",
         "choose_lang": "🌐 **TILNI TANLANG**\n━━━━━━━━━━━━━━━━━━━━\n\nIltimos, o'zingizga qulay tilni tanlang:",
-        "lang_changed": "✅ Til muvaffaqiyatli o'zgartirildi: **O'zbekcha**",
+        "lang_changed": "✅ Til o'zgartirildi: **O'zbekcha**",
         "main_title": "✨ **ALONE PUBG SHOP** ✨",
         "main_hello": "👋 Salom, **{name}**! 💎",
         "main_desc": "🔥 **PUBG Mobile** va boshqa o'yin akkauntlari rasmiy do'koni.",
@@ -229,10 +221,10 @@ TEXTS = {
         "about_t1": "• ✅ Tez yetkazib berish",
         "about_t2": "• ✅ Xavfsiz to'lov",
         "about_t3": "• ✅ 24/7 qo'llab-quvvatlash",
-        "about_contact": "📞 **Admin bilan bog'lanish:** @samir_admin",
+        "about_contact": "📞 **Admin:** @samir_admin",
         "shop_title": "🛍 **DO'KON** ⚡️",
         "shop_empty": "😔 Hozircha sotuvda lotlar mavjud emas.\nTez orada yangilari qo'shiladi! 🔥",
-        "shop_available": "📦 Jami lotlar: **{count} ta**",
+        "shop_available": "📦 Mavjud lotlar: **{count} ta**",
         "shop_choose": "Kerakli lotni tanlang:",
         "lot_in_stock": "📦 Mavjud: **{stock} ta**",
         "lot_sold_out_msg": "🔴 **Bu lot to'liq sotildi!**",
@@ -255,6 +247,7 @@ TEXTS = {
         "promo_hint": "Iltimos, promokodni yuboring:",
         "promo_note": "📌 *Promokod katta-kichik harflarga sezgir emas*",
         "promo_not_found": "❌ **Promokod topilmadi!**",
+        "promo_limit_out": "⚠️ **Promokod limiti tugagan!**",
         "promo_used": "⚠️ **Siz bu promokoddan foydalangansiz!**",
         "promo_activated": "🎉 **PROMOKOD FAOLLASHTIRILDI!**",
         "promo_sent_to_admin": "✅ **Promokod qabul qilindi!**",
@@ -348,7 +341,7 @@ TEXTS = {
         "about_contact": "📞 **Связь:** @samir_admin",
         "shop_title": "🛍 **МАГАЗИН** ⚡️",
         "shop_empty": "😔 Пока нет лотов.",
-        "shop_available": "📦 Всего лотов: **{count} шт**",
+        "shop_available": "📦 Доступные лоты: **{count} шт**",
         "shop_choose": "Выберите лот:",
         "lot_in_stock": "📦 В наличии: **{stock} шт**",
         "lot_sold_out_msg": "🔴 **Лот полностью продан!**",
@@ -371,6 +364,7 @@ TEXTS = {
         "promo_hint": "Отправьте промокод:",
         "promo_note": "📌 *Промокод не чувствителен к регистру*",
         "promo_not_found": "❌ **Промокод не найден!**",
+        "promo_limit_out": "⚠️ **Лимит промокода исчерпан!**",
         "promo_used": "⚠️ **Вы уже использовали его!**",
         "promo_activated": "🎉 **ПРОМОКОД АКТИВИРОВАН!**",
         "promo_sent_to_admin": "✅ **Промокод принят!**",
@@ -464,7 +458,7 @@ TEXTS = {
         "about_contact": "📞 **Contact:** @samir_admin",
         "shop_title": "🛍 **SHOP** ⚡️",
         "shop_empty": "😔 No lots yet.",
-        "shop_available": "📦 Total lots: **{count}**",
+        "shop_available": "📦 Available lots: **{count}**",
         "shop_choose": "Choose the lot:",
         "lot_in_stock": "📦 In stock: **{stock}**",
         "lot_sold_out_msg": "🔴 **Lot fully sold out!**",
@@ -487,6 +481,7 @@ TEXTS = {
         "promo_hint": "Send promo code:",
         "promo_note": "📌 *Case-insensitive*",
         "promo_not_found": "❌ **Promo not found!**",
+        "promo_limit_out": "⚠️ **Promo limit reached!**",
         "promo_used": "⚠️ **Already used!**",
         "promo_activated": "🎉 **PROMO ACTIVATED!**",
         "promo_sent_to_admin": "✅ **Promo accepted!**",
@@ -722,11 +717,9 @@ async def cmd_start(message: Message, state: FSMContext):
         f"{t(user_id, 'main_desc')}\n\n"
         f"{t(user_id, 'main_choose')}"
     )
-    await message.answer(
-        caption,
+    await message.answer(caption,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=main_menu(user_id)),
-        parse_mode="Markdown"
-    )
+        parse_mode="Markdown")
 
 
 @router.callback_query(F.data == "back_to_main")
@@ -808,51 +801,59 @@ async def about_bot(callback: CallbackQuery):
     await callback.answer()
 
 
-# ==================== SHOP ====================
+# ==================== SHOP (faqat stock > 0) ====================
 @router.callback_query(F.data == "shop_list")
 async def shop_list(callback: CallbackQuery):
     user_id = callback.from_user.id
-    all_lots = list(database["lots"].items())
+    # ✅ Faqat stock > 0 bo'lgan lotlarni ko'rsatish
+    available_lots = [(lid, lot) for lid, lot in database["lots"].items() if get_lot_stock(lot) > 0]
 
-    if not all_lots:
-        await safe_edit(callback.message, f"{t(user_id, 'shop_title')}\n\n{t(user_id, 'shop_empty')}", back_button(user_id))
+    if not available_lots:
+        await safe_edit(callback.message,
+            f"{t(user_id, 'shop_title')}\n\n{t(user_id, 'shop_empty')}",
+            back_button(user_id))
         await callback.answer()
         return
 
     kb = []
-    for lid, lot in all_lots:
+    for lid, lot in available_lots:
         stock = get_lot_stock(lot)
-        if stock > 0:
-            kb.append([InlineKeyboardButton(
-                text=f"🎮 {lot['name']} — {format_money(int(lot['price']))} so'm | 📦 {stock} ta",
-                callback_data=f"view_lot_{lid}"
-            )])
-        else:
-            kb.append([InlineKeyboardButton(
-                text=f"🔴 {lot['name']} — SOTILDI (0 ta)",
-                callback_data=f"view_lot_{lid}"
-            )])
+        kb.append([InlineKeyboardButton(
+            text=f"🎮 {lot['name']} — {format_money(int(lot['price']))} so'm | 📦 {stock} ta",
+            callback_data=f"view_lot_{lid}"
+        )])
     kb.append([InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="back_to_main")])
 
-    await safe_edit(
-        callback.message,
-        f"{t(user_id, 'shop_title')}\n━━━━━━━━━━━━━━━━━━━━\n\n{t(user_id, 'shop_available', count=len(all_lots))}\n\n{t(user_id, 'shop_choose')}",
-        kb
-    )
+    await safe_edit(callback.message,
+        f"{t(user_id, 'shop_title')}\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{t(user_id, 'shop_available', count=len(available_lots))}\n\n"
+        f"{t(user_id, 'shop_choose')}",
+        kb)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("view_lot_"))
 async def view_lot(callback: CallbackQuery):
     user_id = callback.from_user.id
-    lid = int(callback.data.split("_")[2])
-    lot = database["lots"].get(lid)
+    try:
+        lid = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Xatolik!", show_alert=True)
+        return
 
+    lot = database["lots"].get(lid)
     if not lot:
         await callback.answer("⚠️ Lot topilmadi!", show_alert=True)
         return
 
     stock = get_lot_stock(lot)
+    if stock <= 0:
+        await safe_edit(callback.message,
+            f"{t(user_id, 'shop_title')}\n\n{t(user_id, 'lot_sold_out_msg')}",
+            back_button(user_id, "shop_list"))
+        await callback.answer()
+        return
+
     text = (
         f"🎮 **{lot['name']}**\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -861,15 +862,10 @@ async def view_lot(callback: CallbackQuery):
         f"📦 Qolgan: **{stock} ta**\n"
         f"📝 {lot.get('desc', '—')}"
     )
-    if stock > 0:
-        kb = [
-            [InlineKeyboardButton(text="💳 Sotib olish", callback_data=f"buy_lot_{lid}")],
-            [InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]
-        ]
-    else:
-        text += "\n\n🔴 **BU LOT TO'LIQ SOTILDI!**"
-        kb = [[InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]]
-
+    kb = [
+        [InlineKeyboardButton(text="💳 Sotib olish", callback_data=f"buy_lot_{lid}")],
+        [InlineKeyboardButton(text=t(user_id, "btn_back"), callback_data="shop_list")]
+    ]
     await safe_edit(callback.message, text, kb)
     await callback.answer()
 
@@ -877,7 +873,12 @@ async def view_lot(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("buy_lot_"))
 async def buy_lot(callback: CallbackQuery):
     user_id = callback.from_user.id
-    lid = int(callback.data.split("_")[2])
+    try:
+        lid = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Xatolik!", show_alert=True)
+        return
+
     lot = database["lots"].get(lid)
     user = callback.from_user
 
@@ -901,7 +902,9 @@ async def buy_lot(callback: CallbackQuery):
     price = int(lot["price"])
 
     if user_balance < price:
-        await callback.answer(f"{t(user_id, 'not_enough')}\n{t(user_id, 'your_balance')} {format_money(user_balance)}\n{t(user_id, 'price')} {format_money(price)}", show_alert=True)
+        await callback.answer(
+            f"{t(user_id, 'not_enough')}\n{t(user_id, 'your_balance')} {format_money(user_balance)}\n{t(user_id, 'price')} {format_money(price)}",
+            show_alert=True)
         return
 
     cred = get_available_credential(lot)
@@ -988,11 +991,9 @@ async def show_profile(callback: CallbackQuery):
 @router.callback_query(F.data == "enter_promo")
 async def enter_promo_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-    await safe_edit(
-        callback.message,
+    await safe_edit(callback.message,
         f"{t(user_id, 'promo_title')}\n━━━━━━━━━━━━━━━━━━━━\n\n{t(user_id, 'promo_hint')}\n\n{t(user_id, 'promo_note')}",
-        cancel_button(user_id, "profile")
-    )
+        cancel_button(user_id, "profile"))
     await state.set_state(UserStates.waiting_for_activate_promo)
     await callback.answer()
 
@@ -1022,7 +1023,8 @@ async def activate_promo_process(message: Message, state: FSMContext):
 
     if not promo_found:
         await message.answer(t(user_id, "promo_not_found"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
         return
 
     promo = promo_found
@@ -1031,14 +1033,16 @@ async def activate_promo_process(message: Message, state: FSMContext):
     promo_used = promo.get("used_count", 0)
 
     if promo_limit > 0 and promo_used >= promo_limit:
-        await message.answer("⚠️ Limit tugagan!",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
+        await message.answer(t(user_id, "promo_limit_out"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
         return
 
     user = database["users"][user_id]
     if promo_code_found in user["used_promos"]:
         await message.answer(t(user_id, "promo_used"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
         return
 
     user["balance"] += promo_amount
@@ -1052,8 +1056,8 @@ async def activate_promo_process(message: Message, state: FSMContext):
         f"{t(user_id, 'promo_activated')}\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🎁 `{promo_code_found}`\n💰 **{format_money(promo_amount)} so'm**\n\n"
         f"{t(user_id, 'promo_sent_to_admin')}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]])
-    )
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=t(user_id, "btn_to_profile"), callback_data="profile")]]))
 
     admin_text = (
         f"🎁 **PROMOKOD FAOLLASHTIRILDI!** 🔔\n"
@@ -1196,8 +1200,7 @@ async def topup_approve(callback: CallbackQuery):
         save_user(user_id)
         save_stats("total_topups", database["total_topups"])
 
-        await callback.bot.send_message(
-            chat_id=user_id,
+        await callback.bot.send_message(chat_id=user_id,
             text=f"{t(user_id, 'balance_added')}\n━━━━━━━━━━━━━━━━━━━━\n\n"
                  f"{t(user_id, 'balance_added_amount')} **{format_money(added_amount)} so'm**\n"
                  f"{t(user_id, 'balance_new')} **{format_money(database['users'][user_id]['balance'])} so'm**",
@@ -1346,19 +1349,19 @@ async def admin_users_list(callback: CallbackQuery):
     await callback.answer()
 
 
-# ==================== LOT MENU ====================
+# ==================== LOT MENU (ADMIN) ====================
 @router.callback_query(F.data == "admin_lots_menu")
 async def admin_lots_menu(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
     text = (
         f"📦 **LOTLAR MENYU**\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Lot yaratib, ichiga email va parollarni qo'shing.\n\n"
         f"📊 Jami lotlar: **{len(database['lots'])} ta**"
     )
     kb = [
-        [InlineKeyboardButton(text="➕ Yangi lot yaratish", callback_data="admin_add_lot")],
-        [InlineKeyboardButton(text="📋 Lotlarni boshqarish", callback_data="admin_manage_lots")],
+        [InlineKeyboardButton(text="➕ Lot qo'shish", callback_data="admin_add_lot")],
+        [InlineKeyboardButton(text="📥 Lotga account qo'shish", callback_data="admin_add_creds_menu")],
+        [InlineKeyboardButton(text="🗑 Lotni o'chirish", callback_data="admin_delete_lot_menu")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
     ]
     await safe_edit(callback.message, text, kb)
@@ -1371,7 +1374,7 @@ async def admin_add_lot(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
         return
     await safe_edit(callback.message,
-        "📦 **YANGI LOT — 1/4**\n\nLot nomini kiriting:\n📌 *Misol: PUBG 30k lot*",
+        "📦 **YANGI LOT — 1/4**\n\nLot nomini kiriting:\n📌 *Misol: PUBG MOBILE*",
         cancel_button(ADMIN_ID, "admin_lots_menu"))
     await state.set_state(AdminStates.adding_lot_name)
     await callback.answer()
@@ -1425,12 +1428,11 @@ async def lot_desc(message: Message, state: FSMContext):
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
     save_lot(lot_id)
-    save_lot_counter()
+    save_stats("lot_counter", database["lot_counter"])
 
     await state.clear()
     kb = [
-        [InlineKeyboardButton(text="➕ Account qo'shish", callback_data=f"add_creds_{lot_id}")],
-        [InlineKeyboardButton(text="📋 Lotni ko'rish", callback_data=f"view_lot_admin_{lot_id}")],
+        [InlineKeyboardButton(text="📥 Account qo'shish", callback_data=f"add_creds_{lot_id}")],
         [InlineKeyboardButton(text="📦 Lotlar menyu", callback_data="admin_lots_menu")],
     ]
     await message.answer(
@@ -1442,23 +1444,55 @@ async def lot_desc(message: Message, state: FSMContext):
         parse_mode="Markdown")
 
 
-# ==================== ACCOUNT QO'SHISH ====================
+# ==================== ACCOUNT QO'SHISH MENYU ====================
+@router.callback_query(F.data == "admin_add_creds_menu")
+async def admin_add_creds_menu(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    if not database["lots"]:
+        await safe_edit(callback.message, "⚠️ Hozircha lotlar yo'q!",
+            [
+                [InlineKeyboardButton(text="➕ Lot qo'shish", callback_data="admin_add_lot")],
+                [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_lots_menu")],
+            ])
+        await callback.answer()
+        return
+
+    kb = []
+    for lid, lot in database["lots"].items():
+        stock = get_lot_stock(lot)
+        total = len(lot["credentials"])
+        kb.append([InlineKeyboardButton(
+            text=f"📥 #{lid} {lot['name']} ({stock}/{total})",
+            callback_data=f"add_creds_{lid}")])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_lots_menu")])
+
+    await safe_edit(callback.message, "📥 **Qaysi lotga account qo'shish?**", kb)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("add_creds_"))
 async def add_creds_start(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
         return
-    lid = int(callback.data.split("_")[2])
+    try:
+        lid = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Xatolik!", show_alert=True)
+        return
+
     lot = database["lots"].get(lid)
     if not lot:
         await callback.answer("⚠️ Topilmadi!", show_alert=True)
         return
+
     await state.update_data(lot_id=lid)
     await safe_edit(callback.message,
-        f"📦 **{lot['name']}** — ACCOUNT QO'SHISH\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📥 **{lot['name']}** — ACCOUNT QO'SHISH\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Har biri **yangi qatorda**: `email:parol`\n\n"
         f"📌 Misol:\n`user1@gmail.com:parol123`\n`user2@gmail.com:parol456`\n\n"
         f"📊 Hozirgi stock: **{get_lot_stock(lot)} ta**",
-        cancel_button(ADMIN_ID, f"view_lot_admin_{lid}"))
+        cancel_button(ADMIN_ID, "admin_lots_menu"))
     await state.set_state(AdminStates.adding_credentials_to_lot)
     await callback.answer()
 
@@ -1488,7 +1522,6 @@ async def add_creds_process(message: Message, state: FSMContext):
             errors.append(line)
             continue
 
-        # Bir xil emailni tekshirish
         exists = False
         for ol in database["lots"].values():
             for c in ol["credentials"]:
@@ -1518,256 +1551,52 @@ async def add_creds_process(message: Message, state: FSMContext):
             text += f"• `{e}`\n"
 
     kb = [
-        [InlineKeyboardButton(text="➕ Yana qo'shish", callback_data=f"add_creds_{lid}")],
-        [InlineKeyboardButton(text="📋 Lotni ko'rish", callback_data=f"view_lot_admin_{lid}")],
+        [InlineKeyboardButton(text="📥 Yana qo'shish", callback_data=f"add_creds_{lid}")],
         [InlineKeyboardButton(text="📦 Lotlar menyu", callback_data="admin_lots_menu")],
     ]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
 
-# ==================== LOTLARNI BOSHQARISH ====================
-@router.callback_query(F.data == "admin_manage_lots")
-async def admin_manage_lots(callback: CallbackQuery):
+# ==================== LOT O'CHIRISH ====================
+@router.callback_query(F.data == "admin_delete_lot_menu")
+async def admin_delete_lot_menu(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
     if not database["lots"]:
-        await safe_edit(callback.message, "⚠️ Hozircha lotlar yo'q.",
-            [
-                [InlineKeyboardButton(text="➕ Yangi lot yaratish", callback_data="admin_add_lot")],
-                [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_lots_menu")],
-            ])
+        await safe_edit(callback.message, "⚠️ Lotlar yo'q.",
+            back_button(ADMIN_ID, "admin_lots_menu"))
         await callback.answer()
         return
+
     kb = []
     for lid, lot in database["lots"].items():
         stock = get_lot_stock(lot)
         total = len(lot["credentials"])
-        status = "🟢" if stock > 0 else "🔴"
         kb.append([InlineKeyboardButton(
-            text=f"{status} #{lid} {lot['name']} — 📦 {stock}/{total}",
-            callback_data=f"view_lot_admin_{lid}")])
+            text=f"🗑 #{lid} {lot['name']} ({stock}/{total})",
+            callback_data=f"delete_lot_{lid}")])
     kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_lots_menu")])
-    await safe_edit(callback.message, "📋 **LOTLARNI BOSHQARISH:**", kb)
+
+    await safe_edit(callback.message, "🗑 **Qaysi lotni o'chirish?**", kb)
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("view_lot_admin_"))
-async def view_lot_admin(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        return
-    lid = int(callback.data.split("_")[3])
-    lot = database["lots"].get(lid)
-    if not lot:
-        await callback.answer("⚠️ Topilmadi!", show_alert=True)
-        return
-    stock = get_lot_stock(lot)
-    total = len(lot["credentials"])
-    sold = total - stock
-    text = (
-        f"📦 **{lot['name']}**\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 **#{lid}**\n🎮 {lot.get('game', '—')}\n"
-        f"💰 **{format_money(int(lot['price']))} so'm**\n"
-        f"📝 {lot.get('desc', '—')}\n"
-        f"📅 {lot.get('created_at', '—')}\n\n"
-        f"📊 **STATISTIKA:**\n"
-        f"📦 Jami: **{total} ta**\n🟢 Mavjud: **{stock} ta**\n✅ Sotilgan: **{sold} ta**\n"
-    )
-    kb = [
-        [InlineKeyboardButton(text="➕ Account qo'shish", callback_data=f"add_creds_{lid}")],
-        [InlineKeyboardButton(text="✏️ Tahrirlash", callback_data=f"edit_lot_{lid}")],
-        [InlineKeyboardButton(text="👁 Mavjud accountlar", callback_data=f"show_creds_{lid}")],
-        [InlineKeyboardButton(text="🗑 Lotni o'chirish", callback_data=f"delete_lot_{lid}")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_manage_lots")],
-    ]
-    await safe_edit(callback.message, text, kb)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("show_creds_"))
-async def show_creds(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        return
-    lid = int(callback.data.split("_")[2])
-    lot = database["lots"].get(lid)
-    if not lot:
-        await callback.answer("⚠️ Topilmadi!", show_alert=True)
-        return
-    available = [c for c in lot["credentials"] if not c["sold"]]
-    if not available:
-        await safe_edit(callback.message, "⚠️ Mavjud account yo'q!",
-            [
-                [InlineKeyboardButton(text="➕ Qo'shish", callback_data=f"add_creds_{lid}")],
-                [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")],
-            ])
-        await callback.answer()
-        return
-    text = f"👁 **{lot['name']}** — **{len(available)} ta**\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    for c in available[:50]:
-        text += f"• `{c['email']}:{c['password']}`\n"
-    if len(available) > 50:
-        text += f"\n*... va yana {len(available) - 50} ta*"
-    kb = [
-        [InlineKeyboardButton(text="🗑 Sotilmaganlarini o'chirish", callback_data=f"clear_creds_{lid}")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")],
-    ]
-    await safe_edit(callback.message, text, kb)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("clear_creds_"))
-async def clear_creds(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        return
-    lid = int(callback.data.split("_")[2])
-    lot = database["lots"].get(lid)
-    if not lot:
-        await callback.answer("⚠️ Topilmadi!", show_alert=True)
-        return
-    before = len(lot["credentials"])
-    lot["credentials"] = [c for c in lot["credentials"] if c["sold"]]
-    after = len(lot["credentials"])
-    removed = before - after
-    save_lot(lid)
-    await callback.answer(f"✅ {removed} ta o'chirildi!", show_alert=True)
-    await view_lot_admin(callback)
-
-
-# ==================== TAHRIRLASH ====================
-@router.callback_query(F.data.startswith("edit_lot_"))
-async def edit_lot_menu(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        return
-    lid = int(callback.data.split("_")[2])
-    lot = database["lots"].get(lid)
-    if not lot:
-        await callback.answer("⚠️ Topilmadi!", show_alert=True)
-        return
-    text = f"✏️ **{lot['name']}** — TAHRIRLASH\n━━━━━━━━━━━━━━━━━━━━\n\nQaysi maydon?"
-    kb = [
-        [InlineKeyboardButton(text=f"🏷 Nomi: {lot['name']}", callback_data=f"edit_field_{lid}_name")],
-        [InlineKeyboardButton(text=f"🎮 O'yin: {lot.get('game', '—')}", callback_data=f"edit_field_{lid}_game")],
-        [InlineKeyboardButton(text=f"💰 Narxi: {format_money(int(lot['price']))} so'm", callback_data=f"edit_field_{lid}_price")],
-        [InlineKeyboardButton(text=f"📝 Tavsif: {lot.get('desc', '—')[:30]}", callback_data=f"edit_field_{lid}_desc")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"view_lot_admin_{lid}")],
-    ]
-    await safe_edit(callback.message, text, kb)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("edit_field_"))
-async def edit_lot_field(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
-        return
-    parts = callback.data.split("_")
-    lid = int(parts[2])
-    field = parts[3]
-    lot = database["lots"].get(lid)
-    if not lot:
-        await callback.answer("⚠️ Topilmadi!", show_alert=True)
-        return
-
-    names = {"name": "nomini", "game": "o'yin nomini", "price": "narxini (raqamda)", "desc": "tavsifini"}
-    await state.update_data(edit_lot_id=lid, edit_field=field)
-
-    if field == "name":
-        await state.set_state(AdminStates.editing_lot_name)
-    elif field == "game":
-        await state.set_state(AdminStates.editing_lot_game)
-    elif field == "price":
-        await state.set_state(AdminStates.editing_lot_price)
-    elif field == "desc":
-        await state.set_state(AdminStates.editing_lot_desc)
-
-    await safe_edit(callback.message, f"✏️ **{lot['name']}** — {names.get(field, field)} kiriting:",
-        cancel_button(ADMIN_ID, f"view_lot_admin_{lid}"))
-    await callback.answer()
-
-
-@router.message(AdminStates.editing_lot_name)
-async def edit_name(message: Message, state: FSMContext):
-    data = await state.get_data()
-    lid = data["edit_lot_id"]
-    lot = database["lots"].get(lid)
-    if not lot:
-        await state.clear()
-        return
-    val = message.text.strip()
-    if not val:
-        await message.answer("❌ Bo'sh bo'lmasin!")
-        return
-    lot["name"] = val
-    save_lot(lid)
-    await state.clear()
-    kb = [[InlineKeyboardButton(text="⬅️ Lotga qaytish", callback_data=f"view_lot_admin_{lid}")]]
-    await message.answer(f"✅ Nom o'zgartirildi: **{val}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-
-
-@router.message(AdminStates.editing_lot_game)
-async def edit_game(message: Message, state: FSMContext):
-    data = await state.get_data()
-    lid = data["edit_lot_id"]
-    lot = database["lots"].get(lid)
-    if not lot:
-        await state.clear()
-        return
-    val = message.text.strip()
-    if not val:
-        await message.answer("❌ Bo'sh bo'lmasin!")
-        return
-    lot["game"] = val
-    save_lot(lid)
-    await state.clear()
-    kb = [[InlineKeyboardButton(text="⬅️ Lotga qaytish", callback_data=f"view_lot_admin_{lid}")]]
-    await message.answer(f"✅ O'yin: **{val}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-
-
-@router.message(AdminStates.editing_lot_price)
-async def edit_price(message: Message, state: FSMContext):
-    data = await state.get_data()
-    lid = data["edit_lot_id"]
-    lot = database["lots"].get(lid)
-    if not lot:
-        await state.clear()
-        return
-    amount = parse_amount(message.text)
-    if amount is None or amount <= 0:
-        await message.answer("❌ Faqat musbat raqam!")
-        return
-    lot["price"] = str(amount)
-    save_lot(lid)
-    await state.clear()
-    kb = [[InlineKeyboardButton(text="⬅️ Lotga qaytish", callback_data=f"view_lot_admin_{lid}")]]
-    await message.answer(f"✅ Narx: **{format_money(amount)} so'm**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-
-
-@router.message(AdminStates.editing_lot_desc)
-async def edit_desc(message: Message, state: FSMContext):
-    data = await state.get_data()
-    lid = data["edit_lot_id"]
-    lot = database["lots"].get(lid)
-    if not lot:
-        await state.clear()
-        return
-    val = message.text.strip()
-    lot["desc"] = val if val != "-" else "—"
-    save_lot(lid)
-    await state.clear()
-    kb = [[InlineKeyboardButton(text="⬅️ Lotga qaytish", callback_data=f"view_lot_admin_{lid}")]]
-    await message.answer(f"✅ Tavsif o'zgartirildi!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
 
 @router.callback_query(F.data.startswith("delete_lot_"))
 async def delete_lot(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
-    lid = int(callback.data.split("_")[2])
+    try:
+        lid = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Xatolik!", show_alert=True)
+        return
     if lid in database["lots"]:
         del database["lots"][lid]
         delete_lot_db(lid)
         await callback.answer("✅ Lot o'chirildi!", show_alert=True)
     else:
         await callback.answer("⚠️ Topilmadi!", show_alert=True)
-    await admin_manage_lots(callback)
+    await admin_delete_lot_menu(callback)
 
 
 # ==================== PROMOKODLAR ====================
